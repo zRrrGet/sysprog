@@ -1,4 +1,4 @@
-#include <sys/time.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,8 +7,6 @@
 #include <ctype.h>
 #include "libcoro.h"
 
-#define MAX_FILE_NUM 32
-#define MAX_NUM_OF_INTEGERS_PER_FILE 200000
 #define DEFAULT_COROUTINE_COUNT (-1)
 #define DEFAULT_LATENCY 0
 
@@ -18,10 +16,10 @@ typedef struct {
 } Array_t;
 
 static int g_coroutineCount = DEFAULT_COROUTINE_COUNT;
-static int g_targetLatency = DEFAULT_LATENCY;
+static unsigned long long g_targetLatency = DEFAULT_LATENCY;
 
 static struct {
-    Array_t contents[MAX_FILE_NUM];
+    Array_t *contents;
     int numOfContents;
     int availableContentInd;
 } g_filePool = {0};
@@ -48,14 +46,14 @@ static int partition(int *arr, int l, int h)
     return (i + 1);
 }
 
-static uint64_t getTimeInMicroSec() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return 1000000 * tv.tv_sec + tv.tv_usec;
+static unsigned long long getTimeInMicroSec() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return 1000000 * ts.tv_sec + ts.tv_nsec / 1000;
 }
 
-static void yieldDecide(uint64_t *startTime, uint64_t *totalTime) {
-    uint64_t timeInMicroSec = getTimeInMicroSec();
+static void yieldDecide(unsigned long long *startTime, unsigned long long *totalTime) {
+    unsigned long long timeInMicroSec = getTimeInMicroSec();
     if (timeInMicroSec - *startTime >= g_targetLatency / g_coroutineCount) {
         *totalTime += getTimeInMicroSec() - *startTime;
         coro_yield();
@@ -63,7 +61,7 @@ static void yieldDecide(uint64_t *startTime, uint64_t *totalTime) {
     }
 }
 
-static void quickSortIterative(int *arr, int l, int h, uint64_t *startTime, uint64_t *totalTime)
+static void quickSortIterative(int *arr, int l, int h, unsigned long long *startTime, unsigned long long *totalTime)
 {
     int stack[h - l + 1];
     int top = -1;
@@ -92,7 +90,7 @@ static void quickSortIterative(int *arr, int l, int h, uint64_t *startTime, uint
 // free args in there
 static int sortCoroed(void *voidArgs)
 {
-    uint64_t startTime = getTimeInMicroSec(), totalTime = 0;
+    unsigned long long startTime = getTimeInMicroSec(), totalTime = 0;
     char *name = voidArgs;
     struct coro *this = coro_this();
     while (g_filePool.availableContentInd < g_filePool.numOfContents) {
@@ -101,8 +99,10 @@ static int sortCoroed(void *voidArgs)
         quickSortIterative(currentContent.array, 0, currentContent.count-1, &startTime, &totalTime);
     }
     totalTime += getTimeInMicroSec() - startTime;
-    printf("%s: switch count %lld, total time in ms %ld\n", name, coro_switch_count(this), totalTime);
+    printf("%s: switch count %lld, total time in us %llu\n", name, coro_switch_count(this), totalTime);
     free(voidArgs);
+
+    return 0;
 }
 
 static int parseArgs(int argc, char **argv)
@@ -120,7 +120,7 @@ static int parseArgs(int argc, char **argv)
                 break;
             case 'l':
                 g_targetLatency = atoi(optarg);
-                printf("Target latency is %d\n", g_targetLatency);
+                printf("Target latency is %llu\n", g_targetLatency);
                 break;
             case '?':
                 if (optopt == 'c' || optopt == 'l') {
@@ -140,9 +140,27 @@ static int parseArgs(int argc, char **argv)
     return 0;
 }
 
+int countNumOfInt(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    int result = 0, c;
+    while ((c = fgetc(file))) {
+        if (c == EOF) {
+            break;
+        }
+        if (c == ' ') {
+            ++result;
+        }
+    }
+    fclose(file);
+    if (result != 0) {
+        ++result;
+    }
+    return result;
+}
+
 int main(int argc, char **argv)
 {
-    uint64_t startTime = getTimeInMicroSec();
+    unsigned long long startTime = getTimeInMicroSec();
 
     if (parseArgs(argc, argv) != 0) {
         return 1;
@@ -151,7 +169,8 @@ int main(int argc, char **argv)
     coro_sched_init();
 
     // reading each file and filling the pool
-    for (int i = optind; i < argc && i < MAX_FILE_NUM; ++i, ++g_filePool.numOfContents) {
+    g_filePool.contents = calloc(argc - optind, sizeof(Array_t));
+    for (int i = optind; i < argc; ++i, ++g_filePool.numOfContents) {
         printf("File input: %s\n", argv[i]);
 
         FILE *file = fopen(argv[i], "r");
@@ -159,17 +178,16 @@ int main(int argc, char **argv)
             fprintf(stderr, "Failed to open fail %s", argv[i]);
             continue;
         }
-        g_filePool.contents[g_filePool.numOfContents].array = malloc(MAX_NUM_OF_INTEGERS_PER_FILE * sizeof(int));
-        int numCount = 0;
-        for (; numCount < MAX_NUM_OF_INTEGERS_PER_FILE; ++numCount) {
+        g_filePool.contents[g_filePool.numOfContents].count = countNumOfInt(argv[i]);
+        g_filePool.contents[g_filePool.numOfContents].array = calloc(g_filePool.contents[g_filePool.numOfContents].count, sizeof(int));
+        for (int i = 0; i < g_filePool.contents[g_filePool.numOfContents].count; ++i) {
             int number;
             if (fscanf(file, "%d", &number) != 1) {
                 break;
             }
-            g_filePool.contents[g_filePool.numOfContents].array[numCount] = number;
+            g_filePool.contents[g_filePool.numOfContents].array[i] = number;
         }
         fclose(file);
-        g_filePool.contents[g_filePool.numOfContents].count = numCount;
     }
 
     if (g_coroutineCount == DEFAULT_COROUTINE_COUNT) {
@@ -190,11 +208,11 @@ int main(int argc, char **argv)
 	}
 
     // merging sorted arrays
-    int indeces[MAX_FILE_NUM] = {0};
+    int *indeces = calloc(g_filePool.numOfContents, sizeof(int));
     FILE *file = fopen("result", "w");
     while (true) {
         bool moreNumsToGo = false;
-        for (int i = 0, flag = 0; i < g_filePool.numOfContents && i < MAX_FILE_NUM; ++i) {
+        for (int i = 0; i < g_filePool.numOfContents; ++i) {
             if (indeces[i] < g_filePool.contents[i].count) {
                 moreNumsToGo = true;
                 break;
@@ -219,7 +237,7 @@ int main(int argc, char **argv)
     }
     fclose(file);
 
-    uint64_t endTime = getTimeInMicroSec();
-    printf("Total work time in ms: %ld\n", endTime - startTime);
+    unsigned long long endTime = getTimeInMicroSec();
+    printf("Total work time in us: %llu\n", endTime - startTime);
 	return 0;
 }
