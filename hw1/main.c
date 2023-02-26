@@ -63,6 +63,9 @@ static void yieldDecide(unsigned long long *startTime, unsigned long long *total
 
 static void quickSortIterative(int *arr, int l, int h, unsigned long long *startTime, unsigned long long *totalTime)
 {
+    if (h < 0) {
+        return;
+    }
     int stack[h - l + 1];
     int top = -1;
   
@@ -147,14 +150,11 @@ int countNumOfInt(const char *filename) {
         if (c == EOF) {
             break;
         }
-        if (c == ' ') {
+        if (c == ' ' || result == 0) {
             ++result;
         }
     }
     fclose(file);
-    if (result != 0) {
-        ++result;
-    }
     return result;
 }
 
@@ -236,6 +236,11 @@ int main(int argc, char **argv)
         ++indeces[minInd];
     }
     fclose(file);
+    free(indeces);
+    for (int i = 0; i < g_filePool.numOfContents; ++i) {
+        free(g_filePool.contents[i].array);
+    }
+    free(g_filePool.contents);
 
     unsigned long long endTime = getTimeInMicroSec();
     printf("Total work time in us: %llu\n", endTime - startTime);
