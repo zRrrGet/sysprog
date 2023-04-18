@@ -4,6 +4,8 @@
 #ifndef THREAD_POOL_DEFINED
 #define THREAD_POOL_DEFINED
 
+#define NEED_DETACH
+
 struct thread_pool;
 struct thread_task;
 
