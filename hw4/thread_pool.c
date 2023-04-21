@@ -87,6 +87,7 @@ static void *threadRunner(void *voidPool) {
 			if (tp->isDetached) {
 				pthread_mutex_unlock(&tp->detachMutex);
 				pthread_mutex_unlock(&tp->resultMutex);
+				tp->status = TINIT;
 				thread_task_delete(tp);
 				continue;
 			} else {
@@ -248,6 +249,7 @@ thread_task_detach(struct thread_task *task)
 	}
 	pthread_mutex_lock(&task->detachMutex);
 	if (task->status == TFINISHED) {
+		task->status = TINIT;
 		pthread_mutex_unlock(&task->detachMutex);
 		thread_task_delete(task);
 		return 0;
