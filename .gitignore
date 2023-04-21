@@ -1,3 +1,7 @@
 .vscode
 *.out
 *.o
+output
+*.swp
+gdb.txt
+core
