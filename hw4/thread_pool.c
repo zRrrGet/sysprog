@@ -46,27 +46,12 @@ static void *threadRunner(void *voidPool) {
 	struct thread_pool *pool = voidPool;
 	while (true) {
 		pthread_mutex_lock(&pool->currentMutex);
-		if (pool->current == NULL) {
-			struct timespec t = {.tv_nsec = 100000}; 
-			pthread_cond_timedwait(&pool->currentCond, &pool->currentMutex, &t);
+		while (pool->current == NULL) {
+			pthread_cond_wait(&pool->currentCond, &pool->currentMutex);
 			if (pool->exit) {
 				pthread_mutex_unlock(&pool->currentMutex);
 				return NULL;
 			}
-		}
-		if (pool->current == NULL) {
-			pthread_mutex_unlock(&pool->currentMutex);
-			continue;
-		}
-		if (pool->current->status == TINIT) {
-			if (pool->last != NULL && pool->current == pool->last) {
-				pool->last = pool->last->prev;
-			}
-			pool->current->prev = NULL;
-			pool->current->next = NULL;
-			pool->current = pool->current->next;
-			pthread_mutex_unlock(&pool->currentMutex);
-			continue;
 		}
 		if (pool->current->status != TWAITING) {
 			pthread_mutex_unlock(&pool->currentMutex);
@@ -131,8 +116,8 @@ thread_pool_delete(struct thread_pool *pool)
 	pool->exit = true;
 	pool->current = NULL;
 	pool->last = NULL;
-	pthread_mutex_unlock(&pool->currentMutex);
 	pthread_cond_broadcast(&pool->currentCond);
+	pthread_mutex_unlock(&pool->currentMutex);
 	ssize_t tCount = pool->createdThreadCount;
 	for (size_t i = 0; i < pool->createdThreadCount; ++i) {
 		pthread_join(pool->threads[i], NULL);
